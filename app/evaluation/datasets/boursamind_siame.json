@@ -1,0 +1,15 @@
+{
+  "name": "BoursaMind SIAME official-publication acceptance",
+  "cases": [
+    {
+      "id": "SIAME-001",
+      "question": "What official SIAME publication evidence is available?",
+      "expected_terms": ["siame"],
+      "filters": {
+        "domain": "boursamind",
+        "ticker": "SIAME",
+        "source": "BVMT"
+      }
+    }
+  ]
+}

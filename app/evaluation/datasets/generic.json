@@ -1,0 +1,17 @@
+{
+  "name": "Generic tenant acceptance",
+  "cases": [
+    {
+      "id": "GEN-001",
+      "question": "How many days do employees have to submit travel receipts?",
+      "expected_terms": ["30 days", "travel receipts"],
+      "expected_document_title": "DemoCompany Travel Policy"
+    },
+    {
+      "id": "GEN-002",
+      "question": "What is the quantum cafeteria password?",
+      "expected_terms": [],
+      "should_abstain": true
+    }
+  ]
+}

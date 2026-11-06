@@ -1,0 +1,44 @@
+[project]
+name = "boursamind-rag"
+version = "0.1.0"
+description = "Standalone multi-tenant RAG/API service consumed by BoursaMind over HTTP"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115,<1.0",
+    "uvicorn[standard]>=0.34,<1.0",
+    "pydantic>=2.10,<3.0",
+    "pydantic-settings>=2.7,<3.0",
+    "sqlalchemy>=2.0.36,<3.0",
+    "httpx>=0.28,<1.0",
+    "python-multipart>=0.0.9",
+    "pypdf>=6.16.1,<7.0",
+    "openai>=1.59,<2.0",
+    "psycopg2-binary>=2.9,<3.0",
+    "alembic>=1.14,<2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.8",
+]
+eval = [
+    "ragas>=0.3",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]

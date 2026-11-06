@@ -1,0 +1,86 @@
+services:
+  rag-postgres:
+    ports: !reset []
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${BOURSAMIND_RAG_POSTGRES_USER:?set in .env.production}
+      POSTGRES_PASSWORD: ${BOURSAMIND_RAG_POSTGRES_PASSWORD:?set in .env.production}
+      POSTGRES_DB: ${BOURSAMIND_RAG_POSTGRES_DB:?set in .env.production}
+    volumes:
+      - rag_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [rag-private]
+
+  rag-migrate:
+    image: ${BOURSAMIND_RAG_IMAGE:?build and set an immutable image tag}
+    build: !reset null
+    command: alembic upgrade head
+    restart: "no"
+    environment: &rag_env
+      BOURSAMIND_RAG_ENVIRONMENT: production
+      BOURSAMIND_RAG_DEBUG: "false"
+      BOURSAMIND_RAG_DATABASE_URL: postgresql+psycopg2://${BOURSAMIND_RAG_POSTGRES_USER}:${BOURSAMIND_RAG_POSTGRES_PASSWORD}@rag-postgres:5432/${BOURSAMIND_RAG_POSTGRES_DB}
+      BOURSAMIND_RAG_DATABASE_POOL_SIZE: ${BOURSAMIND_RAG_DATABASE_POOL_SIZE:-4}
+      BOURSAMIND_RAG_DATABASE_MAX_OVERFLOW: ${BOURSAMIND_RAG_DATABASE_MAX_OVERFLOW:-1}
+      BOURSAMIND_RAG_DATABASE_POOL_TIMEOUT_SECONDS: ${BOURSAMIND_RAG_DATABASE_POOL_TIMEOUT_SECONDS:-30}
+      BOURSAMIND_RAG_DATABASE_POOL_RECYCLE_SECONDS: ${BOURSAMIND_RAG_DATABASE_POOL_RECYCLE_SECONDS:-1800}
+      BOURSAMIND_RAG_DATABASE_CONNECT_TIMEOUT_SECONDS: ${BOURSAMIND_RAG_DATABASE_CONNECT_TIMEOUT_SECONDS:-10}
+      BOURSAMIND_RAG_VECTOR_BACKEND: database
+      BOURSAMIND_RAG_RETRIEVAL_CANDIDATE_POOL: ${BOURSAMIND_RAG_RETRIEVAL_CANDIDATE_POOL:-600}
+      BOURSAMIND_RAG_CREATE_TABLES_ON_STARTUP: "false"
+      BOURSAMIND_RAG_BOOTSTRAP_API_KEY: ${BOURSAMIND_RAG_BOOTSTRAP_API_KEY:?set a generated secret}
+      BOURSAMIND_RAG_ADMIN_KEY: ${BOURSAMIND_RAG_ADMIN_KEY:?set a generated secret}
+      BOURSAMIND_RAG_BOURSAMIND_SERVICE_KEY: ${BOURSAMIND_RAG_BOURSAMIND_SERVICE_KEY:?set a generated secret}
+      BOURSAMIND_RAG_BOURSAMIND_API_URL: http://backend:8000
+      BOURSAMIND_RAG_OPENAI_API_KEY: ${BOURSAMIND_RAG_OPENAI_API_KEY:-}
+    depends_on:
+      rag-postgres:
+        condition: service_healthy
+    networks: [rag-private]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+
+  # Override the development `rag-api` service rather than creating a second
+  # API service.  The shared-network alias is the stable hostname used by the
+  # BoursaMind production backend: http://boursamind-rag:8001.
+  rag-api:
+    image: ${BOURSAMIND_RAG_IMAGE:?build and set an immutable image tag}
+    build: !reset null
+    restart: unless-stopped
+    environment: *rag_env
+    ports: !reset []
+    depends_on:
+      rag-migrate:
+        condition: service_completed_successfully
+    networks:
+      rag-private: {}
+      internal:
+        aliases: [boursamind-rag]
+    stop_grace_period: 30s
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 256
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "5"}
+
+volumes:
+  rag_postgres_data:
+
+networks:
+  rag-private:
+    name: boursamind-rag-private
+    internal: true
+  internal:
+    external: true
+    name: boursamind-internal

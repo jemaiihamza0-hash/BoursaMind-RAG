@@ -1,0 +1,70 @@
+services:
+  rag-postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${BOURSAMIND_RAG_POSTGRES_USER:-boursamind_rag}
+      POSTGRES_PASSWORD: ${BOURSAMIND_RAG_POSTGRES_PASSWORD:-boursamind_rag}
+      POSTGRES_DB: ${BOURSAMIND_RAG_POSTGRES_DB:-boursamind_rag}
+    ports:
+      - "${BOURSAMIND_RAG_POSTGRES_HOST:-127.0.0.1}:${BOURSAMIND_RAG_POSTGRES_PORT:-5544}:5432"
+    volumes:
+      - rag_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${BOURSAMIND_RAG_POSTGRES_USER:-boursamind_rag} -d ${BOURSAMIND_RAG_POSTGRES_DB:-boursamind_rag}"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rag-migrate:
+    build: .
+    command: alembic upgrade head
+    restart: "no"
+    environment: &rag_env
+      BOURSAMIND_RAG_ENVIRONMENT: ${BOURSAMIND_RAG_ENVIRONMENT:-development}
+      BOURSAMIND_RAG_DEBUG: ${BOURSAMIND_RAG_DEBUG:-true}
+      BOURSAMIND_RAG_DATABASE_URL: postgresql+psycopg2://${BOURSAMIND_RAG_POSTGRES_USER:-boursamind_rag}:${BOURSAMIND_RAG_POSTGRES_PASSWORD:-boursamind_rag}@rag-postgres:5432/${BOURSAMIND_RAG_POSTGRES_DB:-boursamind_rag}
+      BOURSAMIND_RAG_VECTOR_BACKEND: ${BOURSAMIND_RAG_VECTOR_BACKEND:-json}
+      BOURSAMIND_RAG_RETRIEVAL_CANDIDATE_POOL: ${BOURSAMIND_RAG_RETRIEVAL_CANDIDATE_POOL:-600}
+      BOURSAMIND_RAG_CREATE_TABLES_ON_STARTUP: ${BOURSAMIND_RAG_CREATE_TABLES_ON_STARTUP:-false}
+      BOURSAMIND_RAG_BOOTSTRAP_API_KEY: ${BOURSAMIND_RAG_BOOTSTRAP_API_KEY:-dev-boursamind-rag-key}
+      BOURSAMIND_RAG_ADMIN_KEY: ${BOURSAMIND_RAG_ADMIN_KEY:-}
+      BOURSAMIND_RAG_OPENAI_API_KEY: ${BOURSAMIND_RAG_OPENAI_API_KEY:-}
+      BOURSAMIND_RAG_OPENAI_EMBEDDING_MODEL: ${BOURSAMIND_RAG_OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
+      BOURSAMIND_RAG_OPENAI_CHAT_MODEL: ${BOURSAMIND_RAG_OPENAI_CHAT_MODEL:-gpt-4o-mini}
+      BOURSAMIND_RAG_EMBEDDING_DIM: ${BOURSAMIND_RAG_EMBEDDING_DIM:-1536}
+      BOURSAMIND_RAG_LLM_PROVIDER: ${BOURSAMIND_RAG_LLM_PROVIDER:-deterministic}
+      BOURSAMIND_RAG_BOURSAMIND_API_URL: ${BOURSAMIND_RAG_BOURSAMIND_API_URL:-http://host.docker.internal:8001}
+      BOURSAMIND_RAG_BOURSAMIND_SERVICE_KEY: ${BOURSAMIND_RAG_BOURSAMIND_SERVICE_KEY:-}
+    depends_on:
+      rag-postgres:
+        condition: service_healthy
+
+  rag-api:
+    build: .
+    restart: unless-stopped
+    init: true
+    environment: *rag_env
+    ports:
+      - "${BOURSAMIND_RAG_HOST:-127.0.0.1}:${BOURSAMIND_RAG_PORT:-8001}:8001"
+    depends_on:
+      rag-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request,json,sys;
+          d=json.load(urllib.request.urlopen('http://localhost:8001/v1/health/ready', timeout=5));
+          sys.exit(0 if d['status']=='ok' else 1)"
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  rag_postgres_data:
