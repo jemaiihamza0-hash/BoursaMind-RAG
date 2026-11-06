@@ -19,7 +19,7 @@ Never commit `.env`, `.env.production`, database volumes or provider tokens.
 
 ## Migration procedure
 
-The current head is `0007_constraint_names`.
+The current head is `0008_remove_weather_events`.
 
 ```bash
 alembic heads

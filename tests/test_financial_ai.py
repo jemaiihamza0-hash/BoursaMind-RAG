@@ -181,6 +181,29 @@ def test_market_only_analysis_is_clear_about_its_limits(client):
     assert "COMPANY_ANALYSIS" not in answer
 
 
+def test_smart_ticker_does_not_collide_with_sma_indicator():
+    from app.financial.intent import classify_financial_intent
+    from app.financial.tools import select_tools
+
+    intent = classify_financial_intent("Analyse financière complète de SMART")
+
+    assert intent == "COMPANY_ANALYSIS"
+    assert {tool.name for tool in select_tools(intent)} == {
+        "get_company",
+        "get_market_snapshot",
+        "get_market_history",
+        "get_technical_indicators",
+        "get_financial_ratios",
+        "get_liquidity",
+    }
+
+
+def test_sma_as_a_separate_word_still_selects_technical_analysis():
+    from app.financial.intent import classify_financial_intent
+
+    assert classify_financial_intent("Affiche la SMA de SMART") == "TECHNICAL_ANALYSIS"
+
+
 def test_financial_query_has_no_evidence_behavior(client):
     response = client.post(
         "/v1/financial/query",
@@ -237,3 +260,34 @@ def test_malformed_structured_provider_degrades_without_breaking_evidence(monkey
     assert calls
     assert all(call.status == "NOT_AVAILABLE" for call in calls)
     assert all(call.limitation for call in calls)
+
+
+def test_structured_provider_rate_limit_is_visible_without_leaking_response(monkeypatch, caplog):
+    import httpx
+
+    from app.config import get_settings
+    from app.financial.tools import fetch_live_tool_calls
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "boursamind_api_url", "http://backend.test")
+    monkeypatch.setattr(settings, "boursamind_service_key", "test-bridge-key")
+    response = httpx.Response(
+        429,
+        text="private upstream detail",
+        request=httpx.Request("POST", "http://backend.test"),
+    )
+    monkeypatch.setattr(
+        "app.financial.tools.httpx.post",
+        lambda *_a, **_kw: response,
+    )
+
+    with caplog.at_level("WARNING", logger="app.financial.tools"):
+        calls = fetch_live_tool_calls(
+            "DOCUMENT_QUESTION", user_id="alice", ticker="SIAME", supplied={}
+        )
+
+    assert calls and all(call.status == "NOT_AVAILABLE" for call in calls)
+    assert "private upstream detail" not in caplog.text
+    records = [record for record in caplog.records if record.message.endswith("bridge failed")]
+    assert records
+    assert all(record.upstream_status_code == 429 for record in records)

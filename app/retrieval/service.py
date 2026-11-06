@@ -65,7 +65,9 @@ class QueryService:
         )
         retrieval_seconds = time.perf_counter() - retrieval_started
         ranking_started = time.perf_counter()
-        ranked = self._rank(candidates, query_vector, query_tokens, request.filters)
+        ranked = self._rank(
+            candidates, query_vector, query_tokens, request.filters, query_text=request.query
+        )
         ranking_seconds = time.perf_counter() - ranking_started
         floor = (
             request.min_relevance
@@ -295,12 +297,21 @@ class QueryService:
         query_vector: list[float],
         query_tokens: list[str],
         filters: dict[str, Any],
+        *,
+        query_text: str,
     ) -> list[dict]:
         if not candidates:
             return []
         tokenized = [scoring.tokenize(chunk.content) for chunk in candidates]
         bm25 = scoring.Bm25Index(tokenized).absolute_scores(query_tokens)
         query_norm = vector_norm(query_vector)
+        intent = scoring.temporal_intent(query_text)
+        period_ranks = [
+            rank
+            for chunk in candidates
+            if (rank := scoring.period_rank(dict(chunk.chunk_metadata or {}), intent)) is not None
+        ]
+        latest_rank = max(period_ranks, default=None) if intent.latest else None
         ranked: list[dict] = []
         for index, chunk in enumerate(candidates):
             metadata = dict(chunk.chunk_metadata or {})
@@ -316,9 +327,24 @@ class QueryService:
                 metadata_match_score=scoring.metadata_match(filters, metadata),
                 trust=scoring.source_trust(metadata, is_official=chunk.is_official),
                 recency=0.0,
+                temporal_relevance=scoring.temporal_relevance(metadata, intent, latest_rank),
+                superseded=scoring.is_superseded(metadata),
             )
             ranked.append({"chunk": chunk, "signals": signals})
-        ranked.sort(key=lambda row: row["signals"].score, reverse=True)
+        if intent.latest:
+            # A latest-period request is a temporal constraint, not a weak
+            # lexical hint. Candidates have already cleared tenant, metadata,
+            # and topical filters, so order compatible evidence by fiscal
+            # period/version before using the hybrid score as a tie-breaker.
+            ranked.sort(
+                key=lambda row: (
+                    row["signals"].temporal_relevance,
+                    row["signals"].score,
+                ),
+                reverse=True,
+            )
+        else:
+            ranked.sort(key=lambda row: row["signals"].score, reverse=True)
         return ranked
 
     def _result(self, row: dict) -> RetrievalResultOut:

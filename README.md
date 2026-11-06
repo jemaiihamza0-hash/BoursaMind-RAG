@@ -209,7 +209,7 @@ The reverse bridge used by controlled financial tools is disabled until both
 
 ## Database migrations
 
-The current Alembic head is `0007_constraint_names`.
+The current Alembic head is `0008_remove_weather_events`.
 
 ```bash
 alembic current
@@ -247,6 +247,7 @@ new client or provider.
 - [Architecture and data flow](docs/ARCHITECTURE.md)
 - [API contract](docs/API_CONTRACT.md)
 - [Operations and deployment](docs/OPERATIONS.md)
+- [Standalone systemd runtime](docs/SYSTEMD.md)
 - [Tenancy and security](docs/TENANCY_AND_SECURITY.md)
 - [BoursaMind backfill strategy](docs/BOURSAMIND_BACKFILL.md)
 - [External data sources](docs/EXTERNAL_DATA_SOURCES.md)

@@ -91,6 +91,102 @@ def recency_factor(publication_date: date | None, *, today: date | None = None) 
     return 0.5 ** (age_days / 180)
 
 
+@dataclass(frozen=True)
+class TemporalIntent:
+    latest: bool = False
+    frequency: str | None = None
+
+
+def temporal_intent(query: str) -> TemporalIntent:
+    text = fold(query)
+    latest = any(
+        token in text
+        for token in ("latest", "most recent", "newest", "dernier", "derniere", "recent")
+    )
+    frequency = None
+    if any(token in text for token in ("quarter", "trimestre", "trimestriel")):
+        frequency = "QUARTERLY"
+    elif any(token in text for token in ("half year", "half-year", "interim", "semestr")):
+        frequency = "INTERIM"
+    elif any(token in text for token in ("annual", "fiscal year", "annuel", "exercice")):
+        frequency = "ANNUAL"
+    return TemporalIntent(latest=latest, frequency=frequency)
+
+
+def _period_parts(metadata: dict[str, Any]) -> tuple[int, int] | None:
+    raw = str(metadata.get("reporting_period") or metadata.get("period") or "").upper()
+    match = re.search(r"(?P<year>20\d{2})(?:[- ]?(?P<kind>Q|H|S)(?P<part>[1-4]))?", raw)
+    if match:
+        year = int(match.group("year"))
+        kind = match.group("kind")
+        part = int(match.group("part") or 4)
+        if kind in {"H", "S"}:
+            part = 2 if part == 1 else 4
+        return year, part
+    fiscal_year = metadata.get("fiscal_year")
+    try:
+        year = int(fiscal_year)
+    except (TypeError, ValueError):
+        return None
+    quarter = metadata.get("fiscal_quarter")
+    try:
+        return year, int(quarter) if quarter else 4
+    except (TypeError, ValueError):
+        return year, 4
+
+
+def frequency_matches(metadata: dict[str, Any], intent: TemporalIntent) -> bool:
+    if intent.frequency is None:
+        return True
+    frequency = str(metadata.get("reporting_frequency") or "").upper()
+    period = str(metadata.get("reporting_period") or metadata.get("period") or "").upper()
+    if intent.frequency == "ANNUAL":
+        return frequency == "ANNUAL" or bool(re.fullmatch(r"20\d{2}", period))
+    if intent.frequency == "QUARTERLY":
+        return frequency == "QUARTERLY" or bool(re.search(r"(?:^|-)Q[1-4]$", period))
+    return frequency in {"SEMI_ANNUAL", "HALF_YEAR", "INTERIM", "YTD"} or bool(
+        re.search(r"(?:^|-)[HS][12]$", period)
+    )
+
+
+def period_rank(metadata: dict[str, Any], intent: TemporalIntent) -> tuple[int, int, int] | None:
+    if not frequency_matches(metadata, intent):
+        return None
+    parts = _period_parts(metadata)
+    if parts is None:
+        return None
+    try:
+        version = int(metadata.get("document_version") or metadata.get("version") or 1)
+    except (TypeError, ValueError):
+        version = 1
+    return parts[0], parts[1], version
+
+
+def temporal_relevance(
+    metadata: dict[str, Any], intent: TemporalIntent, latest_rank: tuple[int, int, int] | None
+) -> float:
+    if not intent.latest or latest_rank is None:
+        return 0.0
+    rank = period_rank(metadata, intent)
+    if rank is None:
+        return 0.0
+    latest_ordinal = latest_rank[0] * 4 + latest_rank[1]
+    ordinal = rank[0] * 4 + rank[1]
+    distance = max(0, latest_ordinal - ordinal)
+    score = 0.5 ** (distance / 4)
+    if rank[:2] == latest_rank[:2] and rank[2] < latest_rank[2]:
+        score *= 0.75 ** (latest_rank[2] - rank[2])
+    return score
+
+
+def is_superseded(metadata: dict[str, Any]) -> bool:
+    return bool(
+        metadata.get("is_superseded")
+        or metadata.get("superseded")
+        or metadata.get("superseded_by")
+    )
+
+
 def metadata_match(filters: dict[str, Any], metadata: dict[str, Any]) -> float:
     if not filters:
         return 0.5
@@ -141,6 +237,7 @@ class RerankSignals:
     metadata_match: float
     trust: float
     recency: float
+    temporal_relevance: float
     topical_relevance: float
     score: float
 
@@ -153,6 +250,8 @@ def rerank(
     metadata_match_score: float,
     trust: float,
     recency: float,
+    temporal_relevance: float = 0.0,
+    superseded: bool = False,
 ) -> RerankSignals:
     topical = (
         0.34 * max(0.0, vector_similarity)
@@ -160,7 +259,9 @@ def rerank(
         + 0.25 * coverage
         + 0.10 * metadata_match_score
     )
-    boost = 1.0 + 0.08 * trust + 0.04 * recency
+    boost = 1.0 + 0.08 * trust + 0.04 * recency + 0.22 * temporal_relevance
+    if superseded:
+        boost *= 0.75
     return RerankSignals(
         vector_similarity=vector_similarity,
         lexical_score=lexical_score,
@@ -168,6 +269,7 @@ def rerank(
         metadata_match=metadata_match_score,
         trust=trust,
         recency=recency,
+        temporal_relevance=temporal_relevance,
         topical_relevance=topical,
         score=topical * boost,
     )

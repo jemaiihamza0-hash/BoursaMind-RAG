@@ -67,15 +67,11 @@ def healthy_sources():
         def normalize(self, payload, *, indicator):
             return [{"source": "ins", "event_type": "economic_indicator", "value": 1}]
 
-    class Weather:
-        def forecast(self, **_kwargs):
-            return {"current": {}}
-
     class News:
         def search(self, *_args, **_kwargs):
             return {"articles": []}
 
-    return Ins(), Weather(), News()
+    return Ins(), News()
 
 
 def test_meta_page_endpoint_never_exposes_token(client, monkeypatch):
@@ -145,6 +141,25 @@ def test_status_reports_meta_not_configured(client, monkeypatch):
     assert response.status_code == 200
     assert response.json()["meta"]["status"] == "not_configured"
     assert response.json()["meta"]["configured"] is False
+
+
+def test_weather_endpoint_and_status_are_removed(client, monkeypatch):
+    monkeypatch.setattr(api_module, "_clients", healthy_sources)
+    monkeypatch.setattr(
+        api_module,
+        "_meta_client",
+        lambda: MetaGraphClient(
+            "https://graph.facebook.com",
+            version="v26.0",
+            page_id="",
+            page_access_token="",
+        ),
+    )
+
+    assert client.get("/v1/external/weather", headers=HEADERS).status_code == 404
+    status = client.get("/v1/data-sources/status", headers=HEADERS)
+    assert status.status_code == 200
+    assert "open_meteo" not in status.json()
 
 
 def test_status_reports_successful_meta_connection_without_token(client, monkeypatch):
@@ -234,7 +249,6 @@ def test_meta_failure_does_not_break_other_source_statuses(client, monkeypatch):
     assert response.status_code == 200
     body = response.json()
     assert body["ins"] == "available"
-    assert body["open_meteo"] == "available"
     assert body["gdelt"] == "available"
     assert body["meta"]["status"] == "authentication_error"
     get_settings.cache_clear()

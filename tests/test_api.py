@@ -352,6 +352,152 @@ def test_financial_citation_exposes_versioned_provenance(client):
     assert citation["extraction_method"] == "PDF_TABLE"
 
 
+@pytest.mark.parametrize("ticker", ["NVDA", "AAPL", "MSFT"])
+def test_latest_annual_query_prioritizes_latest_validated_period(client, ticker):
+    for year in (2024, 2026):
+        created = client.post(
+            "/v1/documents",
+            headers=HEADERS,
+            json={
+                "external_id": f"{ticker.lower()}-{year}-annual",
+                "title": f"{ticker} annual results {year}",
+                "text": f"{ticker} validated annual revenue and net income for fiscal year {year}.",
+                "document_type": "FINANCIAL_STATEMENTS",
+                "metadata": {
+                    "ticker": ticker,
+                    "reporting_period": str(year),
+                    "reporting_frequency": "ANNUAL",
+                    "financial_evidence_status": "VALIDATED",
+                    "is_official": True,
+                },
+            },
+        )
+        assert created.status_code == 201
+
+    response = client.post(
+        "/v1/query",
+        headers=HEADERS,
+        json={
+            "query": f"What are {ticker}'s latest annual revenue and net income?",
+            "filters": {"ticker": ticker},
+            "top_k": 2,
+            "min_relevance": 0,
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["abstained"] is False
+    assert body["citations"][0]["reporting_period"] == "2026"
+    assert body["citations"][0]["validation_status"] == "VALIDATED"
+
+
+def test_latest_quarterly_query_does_not_promote_annual_evidence(client):
+    documents = (
+        ("nvda-2026-annual", "2026", "ANNUAL"),
+        ("nvda-2025-q3", "2025-Q3", "QUARTERLY"),
+        ("nvda-2025-q4", "2025-Q4", "QUARTERLY"),
+    )
+    for external_id, period, frequency in documents:
+        assert client.post(
+            "/v1/documents",
+            headers=HEADERS,
+            json={
+                "external_id": external_id,
+                "title": f"NVIDIA results {period}",
+                "text": f"NVIDIA validated revenue and net income for {period}.",
+                "document_type": "FINANCIAL_STATEMENTS",
+                "metadata": {
+                    "ticker": "NVDA",
+                    "reporting_period": period,
+                    "reporting_frequency": frequency,
+                    "financial_evidence_status": "VALIDATED",
+                    "is_official": True,
+                },
+            },
+        ).status_code == 201
+    response = client.post(
+        "/v1/query",
+        headers=HEADERS,
+        json={
+            "query": "What are NVIDIA's latest quarterly results?",
+            "filters": {"ticker": "NVDA"},
+            "top_k": 3,
+            "min_relevance": 0,
+        },
+    ).json()
+    assert response["citations"][0]["reporting_period"] == "2025-Q4"
+
+
+def test_historical_comparison_keeps_both_requested_periods(client):
+    for year in (2024, 2025):
+        assert client.post(
+            "/v1/documents",
+            headers=HEADERS,
+            json={
+                "external_id": f"aapl-comparison-{year}",
+                "title": f"Apple annual results {year}",
+                "text": f"Apple revenue comparison evidence for fiscal year {year}.",
+                "metadata": {
+                    "ticker": "AAPL",
+                    "reporting_period": str(year),
+                    "reporting_frequency": "ANNUAL",
+                    "financial_evidence_status": "VALIDATED",
+                },
+            },
+        ).status_code == 201
+    response = client.post(
+        "/v1/query",
+        headers=HEADERS,
+        json={
+            "query": "Compare Apple revenue in 2024 and 2025",
+            "filters": {"ticker": "AAPL"},
+            "top_k": 2,
+            "min_relevance": 0,
+        },
+    ).json()
+    assert {row["reporting_period"] for row in response["citations"]} == {"2024", "2025"}
+
+
+def test_latest_query_prefers_revision_and_missing_company_abstains(client):
+    for version, superseded in ((1, True), (2, False)):
+        assert client.post(
+            "/v1/documents",
+            headers=HEADERS,
+            json={
+                "external_id": f"msft-2026-v{version}",
+                "title": f"Microsoft 2026 filing v{version}",
+                "text": "Microsoft validated latest annual revenue.",
+                "metadata": {
+                    "ticker": "MSFT",
+                    "reporting_period": "2026",
+                    "reporting_frequency": "ANNUAL",
+                    "document_version": version,
+                    "is_superseded": superseded,
+                    "financial_evidence_status": "VALIDATED",
+                },
+            },
+        ).status_code == 201
+    latest = client.post(
+        "/v1/query",
+        headers=HEADERS,
+        json={
+            "query": "Microsoft latest annual revenue",
+            "filters": {"ticker": "MSFT"},
+            "top_k": 2,
+            "min_relevance": 0,
+        },
+    ).json()
+    assert latest["citations"][0]["document_version"] == 2
+
+    missing = client.post(
+        "/v1/query",
+        headers=HEADERS,
+        json={"query": "latest results", "filters": {"ticker": "NO_SUCH_ISSUER"}},
+    ).json()
+    assert missing["abstained"] is True
+    assert missing["citations"] == []
+
+
 def test_visibility_reconciliation_rolls_back_midway_and_can_retry(client, monkeypatch):
     from app.documents.service import DocumentService
 

@@ -108,7 +108,7 @@ create or validate market prices or financial statements.
 
 ## External events
 
-Optional weather, GDELT, INS and Meta connectors persist normalized events and
+Optional GDELT, INS and Meta connectors persist normalized events and
 raw provider payloads in `external_events`. This store is tenant-scoped but is
 separate from document retrieval. Provider errors are isolated from core RAG.
 

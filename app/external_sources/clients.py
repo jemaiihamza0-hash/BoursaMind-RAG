@@ -1,4 +1,4 @@
-"""Small, defensive HTTP clients for INS, Open-Meteo and GDELT."""
+"""Small, defensive HTTP clients for INS, GDELT and Meta."""
 
 from __future__ import annotations
 
@@ -195,58 +195,6 @@ class BaseClient:
             status="provider_unavailable",
             retryable=response.status_code >= 500 or response.status_code == 429,
         )
-
-
-class OpenMeteoClient(BaseClient):
-    source = "open_meteo"
-
-    def forecast(
-        self, *, latitude: float, longitude: float, location: str, forecast_days: int = 3
-    ) -> dict[str, Any]:
-        variables = (
-            "temperature_2m,relative_humidity_2m,precipitation,rain,wind_speed_10m,weather_code"
-        )
-        params = {
-            "latitude": latitude,
-            "longitude": longitude,
-            "current": variables,
-            "hourly": variables,
-            "forecast_days": forecast_days,
-            "timezone": "UTC",
-        }
-        payload = self._get_json(self.base_url, params)
-        if not isinstance(payload, dict) or not isinstance(payload.get("current"), dict):
-            raise ExternalSourceError("open_meteo response has no current object")
-        payload["location"] = location
-        return payload
-
-    def normalize(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
-        current = payload.get("current") or {}
-        observed = _timestamp(current.get("time")) or datetime.now(UTC)
-        location = payload.get("location")
-        mapping = {
-            "temperature_2m": ("temperature", "°C"),
-            "relative_humidity_2m": ("relative_humidity", "%"),
-            "precipitation": ("precipitation", "mm"),
-            "rain": ("rain", "mm"),
-            "wind_speed_10m": ("wind_speed", "km/h"),
-            "weather_code": ("weather_code", None),
-        }
-        return [
-            {
-                "source": self.source,
-                "event_type": "weather",
-                "location": location,
-                "metric": metric,
-                "value": current[key],
-                "unit": unit,
-                "observed_at": observed,
-                "external_id": f"{location}:{metric}:{observed.isoformat()}",
-                "raw_data": payload,
-            }
-            for key, (metric, unit) in mapping.items()
-            if key in current and isinstance(current[key], (int, float))
-        ]
 
 
 class GdeltClient(BaseClient):
