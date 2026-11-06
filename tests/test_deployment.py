@@ -73,3 +73,15 @@ def test_dependency_install_survives_transient_registry_failures() -> None:
     assert "PIP_DEFAULT_TIMEOUT=120" in dockerfile
     assert "PIP_RETRIES=5" in dockerfile
     assert "--mount=type=cache,target=/root/.cache/pip" in dockerfile
+
+
+def test_standalone_repository_owns_hardened_systemd_unit() -> None:
+    unit = (ROOT / "deploy" / "systemd" / "boursamind-rag.service").read_text(
+        encoding="utf-8"
+    )
+
+    assert "WorkingDirectory=/www/wwwroot/BoursaMind-RAG" in unit
+    assert "EnvironmentFile=/etc/boursamind/rag.env" in unit
+    assert "--host 127.0.0.1 --port 8002" in unit
+    assert "ProtectHome=true" in unit
+    assert "NoNewPrivileges=true" in unit
