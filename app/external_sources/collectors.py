@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.external_sources.clients import GdeltClient, InsClient, MetaGraphClient, OpenMeteoClient
+from app.external_sources.clients import GdeltClient, InsClient, MetaGraphClient
 from app.external_sources.models import ExternalEventCreate
 from app.models import ExternalEvent
 
@@ -39,25 +39,6 @@ def persist_events(
     for row in persisted:
         session.refresh(row)
     return persisted
-
-
-def collect_weather(
-    session: Session,
-    tenant_id: int,
-    client: OpenMeteoClient,
-    locations: list[dict[str, Any]],
-    forecast_days: int = 3,
-) -> list[ExternalEvent]:
-    events = []
-    for location in locations:
-        payload = client.forecast(
-            latitude=float(location["latitude"]),
-            longitude=float(location["longitude"]),
-            location=str(location["name"]),
-            forecast_days=forecast_days,
-        )
-        events.extend(client.normalize(payload))
-    return persist_events(session, tenant_id, events)
 
 
 def collect_news(

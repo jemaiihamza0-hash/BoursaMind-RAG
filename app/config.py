@@ -1,13 +1,19 @@
 """Configuration for the standalone BoursaMind-RAG service."""
 
-import json
+import os
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_ENV_FILE = (
+    None
+    if os.environ.get("BOURSAMIND_RAG_SKIP_DOTENV") == "1"
+    else PROJECT_ROOT / ".env"
+)
 DEFAULT_INS_BASE_URL = "https://catalog.data.gov.tn"
 DEFAULT_INS_QUERY_PATH = "fr/api/3/action/datastore_search"
 DEFAULT_INS_INDICATOR = "population_kelibia_2004_2014"
@@ -28,7 +34,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="BOURSAMIND_RAG_",
-        env_file=PROJECT_ROOT / ".env",
+        env_file=_ENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -95,7 +101,6 @@ class Settings(BaseSettings):
     ins_indicator: str = DEFAULT_INS_INDICATOR
     ins_resource_id: str = DEFAULT_INS_RESOURCE_ID
     ins_limit: int = 5
-    open_meteo_base_url: str = "https://api.open-meteo.com/v1/forecast"
     gdelt_base_url: str = "https://api.gdeltproject.org/api/v2/doc/doc"
     meta_graph_base_url: str = "https://graph.facebook.com"
     meta_graph_version: str = "v26.0"
@@ -107,15 +112,6 @@ class Settings(BaseSettings):
     external_http_max_retries: int = 2
     gdelt_default_timespan: str = "7d"
     gdelt_default_maxrecords: int = 50
-    open_meteo_forecast_days: int = 3
-    open_meteo_locations_json: str = (
-        '[{"name":"Tunis","latitude":36.8065,"longitude":10.1815},'
-        '{"name":"Sfax","latitude":34.7406,"longitude":10.7603},'
-        '{"name":"Sousse","latitude":35.8256,"longitude":10.63699},'
-        '{"name":"Bizerte","latitude":37.2744,"longitude":9.8739},'
-        '{"name":"Nabeul","latitude":36.4561,"longitude":10.7376},'
-        '{"name":"Gabes","latitude":33.8815,"longitude":10.0982}]'
-    )
 
     @property
     def is_production(self) -> bool:
@@ -128,12 +124,14 @@ class Settings(BaseSettings):
             issues.append("DEBUG must be false in production")
         if not self.database_url.startswith(("postgresql://", "postgresql+psycopg2://")):
             issues.append("BOURSAMIND_RAG_DATABASE_URL must use PostgreSQL in production")
-        if (
-            "localhost" in self.database_url
-            or "boursamind_rag:boursamind_rag@" in self.database_url
-        ):
+        if "boursamind_rag:boursamind_rag@" in self.database_url:
             issues.append(
-                "BOURSAMIND_RAG_DATABASE_URL must not use development credentials or localhost"
+                "BOURSAMIND_RAG_DATABASE_URL must not use development credentials"
+            )
+        database = urlsplit(self.database_url)
+        if database.path.rstrip("/").rsplit("/", 1)[-1] == "bvmt_copilot":
+            issues.append(
+                "BOURSAMIND_RAG_DATABASE_URL must not target the BoursaMind database"
             )
         if self.database_pool_size < 1 or self.database_max_overflow < 0:
             issues.append("RAG database pool size must be >= 1 and max overflow >= 0")
@@ -159,7 +157,7 @@ class Settings(BaseSettings):
             issues.append(
                 "BOURSAMIND_RAG_BOURSAMIND_SERVICE_KEY must be a generated secret (>= 32 chars)"
             )
-        if not self.boursamind_api_url.strip() or "localhost" in self.boursamind_api_url:
+        if not self.boursamind_api_url.strip():
             issues.append("BOURSAMIND_RAG_BOURSAMIND_API_URL must identify the internal backend")
         if self.embedding_provider.strip().lower() == "openai" and not self.openai_api_key.strip():
             issues.append("OpenAI embedding provider requires BOURSAMIND_RAG_OPENAI_API_KEY")
@@ -180,21 +178,6 @@ class Settings(BaseSettings):
         if not self.ins_resource_id.strip():
             self.ins_resource_id = DEFAULT_INS_RESOURCE_ID
         return self
-
-    @property
-    def open_meteo_locations(self) -> list[dict]:
-        try:
-            rows = json.loads(self.open_meteo_locations_json)
-        except json.JSONDecodeError as exc:
-            raise ValueError("BOURSAMIND_RAG_OPEN_METEO_LOCATIONS_JSON is invalid JSON") from exc
-        if not isinstance(rows, list):
-            raise ValueError("BOURSAMIND_RAG_OPEN_METEO_LOCATIONS_JSON must be a list")
-        locations = []
-        for row in rows:
-            if not isinstance(row, dict) or not {"name", "latitude", "longitude"} <= row.keys():
-                raise ValueError("Each weather location needs name, latitude, and longitude")
-            locations.append(row)
-        return locations
 
     @property
     def meta_permissions(self) -> set[str]:

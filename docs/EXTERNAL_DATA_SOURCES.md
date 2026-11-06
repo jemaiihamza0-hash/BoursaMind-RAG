@@ -2,12 +2,6 @@
 
 The external-data layer is independent from document embeddings and financial impact analysis. It collects public facts into the tenant-scoped `external_events` table while preserving provider payloads for later processing.
 
-## Open-Meteo
-
-`OpenMeteoClient` requests current and hourly temperature, relative humidity, precipitation, rain, wind speed, and WMO weather code. Locations come from `BOURSAMIND_RAG_OPEN_METEO_LOCATIONS_JSON`; the default list contains Tunis, Sfax, Sousse, Bizerte, Nabeul, and Gabes.
-
-Each current metric becomes one normalized weather event. Its identity is location + metric + observation timestamp, so polling the same observation is idempotent.
-
 ## GDELT DOC 2.0
 
 `GdeltClient` always uses `mode=artlist`, `format=json`, and `sort=datedesc`. The caller supplies a generic query, bounded timespan, and bounded record count. It is suitable for company names, aliases, and economic or operational event terms.
@@ -62,7 +56,6 @@ Clients use bounded timeouts and retry timeouts, transport errors, and HTTP 5xx 
 ```powershell
 $headers = @{ "X-BoursaMind-RAG-Key" = "dev-boursamind-rag-key" }
 Invoke-RestMethod http://127.0.0.1:8001/v1/data-sources/status -Headers $headers
-Invoke-RestMethod "http://127.0.0.1:8001/v1/external/weather?location=Sfax" -Headers $headers
 Invoke-RestMethod "http://127.0.0.1:8001/v1/external/news?query=Tunisair&timespan=7d&maxrecords=50" -Headers $headers
 Invoke-RestMethod http://127.0.0.1:8001/v1/external/ins -Headers $headers
 Invoke-RestMethod "http://127.0.0.1:8001/v1/external/events?source=gdelt" -Headers $headers

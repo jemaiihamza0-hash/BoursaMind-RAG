@@ -8,6 +8,7 @@ not configured.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -15,6 +16,8 @@ import httpx
 
 from app.config import get_settings
 from app.financial.schemas import FinancialToolCallOut
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -225,8 +228,21 @@ def fetch_live_tool_calls(
                     call.evidence_type = payload["evidence_type"]
                 call.data = data
                 call.limitation = payload.get("limitations")
-        except (httpx.HTTPError, ValueError):
+        except (httpx.HTTPError, ValueError) as exc:
             # Financial answers remain available from documents/memory when a
             # structured provider is down; do not leak transport details.
+            status_code = (
+                exc.response.status_code
+                if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None
+                else None
+            )
+            logger.warning(
+                "BoursaMind financial tool bridge failed",
+                extra={
+                    "financial_tool": call.name,
+                    "failure_type": type(exc).__name__,
+                    "upstream_status_code": status_code,
+                },
+            )
             call.limitation = "Authoritative BoursaMind structured data is temporarily unavailable."
     return calls

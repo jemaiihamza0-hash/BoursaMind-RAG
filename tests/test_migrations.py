@@ -61,14 +61,46 @@ def test_rag_migration_graph_is_linear_complete_and_singular() -> None:
     revisions = list(script.walk_revisions())
     ids = [revision.revision for revision in revisions]
 
-    assert script.get_heads() == ["0007_constraint_names"]
+    assert script.get_heads() == ["0008_remove_weather_events"]
     assert script.get_bases() == ["0001_initial_schema"]
-    assert len(ids) == len(set(ids)) == 7
+    assert len(ids) == len(set(ids)) == 8
     assert all(not isinstance(revision.down_revision, tuple) for revision in revisions)
     assert all(
         revision.down_revision is None or revision.down_revision in ids for revision in revisions
     )
     assert all(Path(revision.path).stem.startswith(revision.revision) for revision in revisions)
+
+
+@requires_postgres
+def test_weather_event_removal_preserves_other_external_events(
+    migration_database: str,
+) -> None:
+    config = alembic_config(migration_database)
+    command.upgrade(config, "0007_constraint_names")
+    engine = create_engine(migration_database)
+    with engine.begin() as connection:
+        tenant_id = connection.execute(
+            text("INSERT INTO tenants (slug, name) VALUES ('removal', 'Removal') RETURNING id")
+        ).scalar_one()
+        connection.execute(
+            text(
+                "INSERT INTO external_events "
+                "(tenant_id, source, event_type, external_id) VALUES "
+                "(:tenant_id, 'open_meteo', 'forecast', 'weather-source'), "
+                "(:tenant_id, 'legacy', 'weather', 'weather-type'), "
+                "(:tenant_id, 'gdelt', 'news', 'preserved-news')"
+            ),
+            {"tenant_id": tenant_id},
+        )
+
+    command.upgrade(config, "head")
+
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text("SELECT source, event_type, external_id FROM external_events")
+        ).all()
+        assert rows == [("gdelt", "news", "preserved-news")]
+    engine.dispose()
 
 
 @requires_postgres
@@ -106,7 +138,7 @@ def test_clean_database_reaches_head_and_matches_critical_orm_contract(
     with engine.connect() as connection:
         assert (
             connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-            == "0007_constraint_names"
+            == "0008_remove_weather_events"
         )
     engine.dispose()
 
@@ -312,7 +344,7 @@ def test_prior_rag_revision_upgrades_and_preserves_tenant_content_and_lineage(
     with engine.connect() as connection:
         assert (
             connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-            == "0006_shared_document_visibility"
+            == "0007_constraint_names"
         )
         assert (
             connection.execute(
@@ -331,7 +363,7 @@ def test_prior_rag_revision_upgrades_and_preserves_tenant_content_and_lineage(
     with engine.connect() as connection:
         assert (
             connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-            == "0007_constraint_names"
+            == "0008_remove_weather_events"
         )
     engine.dispose()
 
@@ -371,7 +403,7 @@ def test_concurrent_rag_upgrades_serialize(migration_database: str) -> None:
     with engine.connect() as connection:
         assert (
             connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-            == "0007_constraint_names"
+            == "0008_remove_weather_events"
         )
     engine.dispose()
 

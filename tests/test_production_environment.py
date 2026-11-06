@@ -21,18 +21,48 @@ def test_safe_production_environment_has_no_issues() -> None:
     assert _safe().production_config_issues() == []
 
 
-def test_production_rejects_placeholders_local_urls_and_unbounded_pool() -> None:
+def test_production_rejects_placeholders_development_credentials_and_unbounded_pool() -> None:
     cases = (
         {"bootstrap_api_key": "REQUIRED_SECRET_REPLACE_WITH_KEY"},
         {"admin_key": "short"},
         {"boursamind_service_key": "REPLACE_WITH_SERVICE_KEY_123456789"},
-        {"boursamind_api_url": "http://localhost:8000"},
         {"database_url": "postgresql+psycopg2://boursamind_rag:boursamind_rag@localhost/rag"},
         {"database_pool_size": 0},
         {"database_pool_timeout_seconds": 0},
     )
     for values in cases:
         assert _safe(**values).production_config_issues(), values
+
+
+def test_single_host_loopback_topology_is_supported() -> None:
+    settings = _safe(
+        database_url="postgresql+psycopg2://rag_app:strong@127.0.0.1:5432/boursamind_rag",
+        boursamind_api_url="http://127.0.0.1:8000",
+    )
+
+    assert settings.production_config_issues() == []
+
+
+def test_rag_preflight_refuses_backend_database() -> None:
+    settings = _safe(
+        database_url="postgresql+psycopg2://rag_app:strong@127.0.0.1:5432/bvmt_copilot"
+    )
+
+    assert any("BoursaMind database" in issue for issue in settings.production_config_issues())
+
+
+def test_rag_systemd_preflight_requires_production(monkeypatch) -> None:
+    from app import production_preflight
+
+    monkeypatch.setattr(production_preflight, "get_settings", lambda: _safe())
+    assert production_preflight.preflight() == []
+
+    monkeypatch.setattr(
+        production_preflight,
+        "get_settings",
+        lambda: _safe(environment="development"),
+    )
+    assert any("ENVIRONMENT" in issue for issue in production_preflight.preflight())
 
 
 def test_openai_provider_requires_key_but_deterministic_mode_does_not() -> None:

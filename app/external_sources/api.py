@@ -15,13 +15,11 @@ from app.external_sources.clients import (
     GdeltClient,
     InsClient,
     MetaGraphClient,
-    OpenMeteoClient,
 )
 from app.external_sources.collectors import (
     collect_ins,
     collect_meta_posts,
     collect_news,
-    collect_weather,
 )
 from app.external_sources.models import ExternalEventOut, MetaPageOut, MetaPostsOut
 from app.models import ExternalEvent
@@ -30,7 +28,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _clients() -> tuple[InsClient, OpenMeteoClient, GdeltClient]:
+def _clients() -> tuple[InsClient, GdeltClient]:
     settings = get_settings()
     options = {
         "timeout": settings.external_http_timeout_seconds,
@@ -38,7 +36,6 @@ def _clients() -> tuple[InsClient, OpenMeteoClient, GdeltClient]:
     }
     return (
         InsClient(settings.ins_base_url, **options),
-        OpenMeteoClient(settings.open_meteo_base_url, **options),
         GdeltClient(settings.gdelt_base_url, **options),
     )
 
@@ -87,8 +84,7 @@ def _meta_error(exc: ExternalSourceError) -> HTTPException:
 @router.get("/data-sources/status")
 def data_sources_status(_principal: PlatformPrincipalDep) -> dict[str, Any]:
     settings = get_settings()
-    ins, weather, news = _clients()
-    locations = settings.open_meteo_locations
+    ins, news = _clients()
     checks: dict[str, Any] = {}
 
     ins_params = {"resource_id": settings.ins_resource_id, "limit": settings.ins_limit}
@@ -105,23 +101,6 @@ def data_sources_status(_principal: PlatformPrincipalDep) -> dict[str, Any]:
             checks["ins"] = exc.status
         except (TypeError, ValueError):
             checks["ins"] = "invalid_response"
-
-    try:
-        if not locations:
-            checks["open_meteo"] = "not_configured"
-        else:
-            first = locations[0]
-            weather.forecast(
-                latitude=float(first["latitude"]),
-                longitude=float(first["longitude"]),
-                location=str(first["name"]),
-                forecast_days=1,
-            )
-            checks["open_meteo"] = "available"
-    except ExternalSourceError as exc:
-        checks["open_meteo"] = exc.status
-    except (IndexError, KeyError, TypeError, ValueError):
-        checks["open_meteo"] = "invalid_response"
 
     try:
         news.search("Tunisia", timespan="1d", maxrecords=1)
@@ -193,39 +172,6 @@ def external_meta_posts(
     return MetaPostsOut(status="available", events=events)
 
 
-@router.get("/external/weather", response_model=list[ExternalEventOut])
-def external_weather(
-    principal: QueryPrincipalDep,
-    session: DbSessionDep,
-    location: str = Query(min_length=1, max_length=120),
-):
-    settings = get_settings()
-    selected = next(
-        (
-            row
-            for row in settings.open_meteo_locations
-            if str(row["name"]).casefold() == location.casefold()
-        ),
-        None,
-    )
-    if selected is None:
-        allowed = [str(row["name"]) for row in settings.open_meteo_locations]
-        raise HTTPException(
-            status_code=422, detail={"error": "Unknown location", "allowed": allowed}
-        )
-    _ins, client, _news = _clients()
-    try:
-        return collect_weather(
-            session,
-            principal.tenant.id,
-            client,
-            [selected],
-            forecast_days=settings.open_meteo_forecast_days,
-        )
-    except ExternalSourceError as exc:
-        raise _provider_error("open_meteo", exc) from exc
-
-
 @router.get("/external/news", response_model=list[ExternalEventOut])
 def external_news(
     principal: QueryPrincipalDep,
@@ -236,7 +182,7 @@ def external_news(
     maxrecords: int | None = Query(default=None, ge=1, le=250),
 ):
     settings = get_settings()
-    _ins, _weather, client = _clients()
+    _ins, client = _clients()
     try:
         return collect_news(
             session,
@@ -264,7 +210,7 @@ def external_ins(principal: QueryPrincipalDep, session: DbSessionDep):
         if settings.ins_resource_id
         else None
     )
-    client, _weather, _news = _clients()
+    client, _news = _clients()
     try:
         return collect_ins(
             session,

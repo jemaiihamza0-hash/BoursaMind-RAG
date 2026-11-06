@@ -7,7 +7,6 @@ from app.external_sources.clients import (
     ExternalSourceError,
     GdeltClient,
     InsClient,
-    OpenMeteoClient,
 )
 
 
@@ -23,30 +22,6 @@ def mocked_client(payload, *, status_code: int = 200, content_type: str = "appli
         )
 
     return httpx.Client(transport=httpx.MockTransport(handler))
-
-
-def test_open_meteo_response_parsing_and_normalization():
-    client = OpenMeteoClient(
-        "https://api.open-meteo.com/v1/forecast",
-        client=mocked_client(
-            {
-                "current": {
-                    "time": "2026-08-26T12:00",
-                    "temperature_2m": 44.2,
-                    "relative_humidity_2m": 22,
-                    "precipitation": 0.0,
-                    "rain": 0.0,
-                    "wind_speed_10m": 18.5,
-                    "weather_code": 0,
-                }
-            }
-        ),
-    )
-    payload = client.forecast(latitude=34.74, longitude=10.76, location="Sfax")
-    events = client.normalize(payload)
-    assert len(events) == 6
-    assert events[0]["location"] == "Sfax"
-    assert events[0]["observed_at"].tzinfo is not None
 
 
 def test_gdelt_parsing_deduplicates_articles():

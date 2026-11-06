@@ -102,8 +102,6 @@ def main() -> None:
 
     headers = {settings.api_key_header: settings.bootstrap_api_key}
     paths = [
-        "/v1/external/weather?location=Sfax",
-        "/v1/external/weather?location=Sfax",
         "/v1/external/news?query=Tunisair&timespan=7d&maxrecords=10",
         "/v1/external/news?query=Tunisair&timespan=7d&maxrecords=10",
         "/v1/external/ins",
