@@ -97,24 +97,41 @@ def chunk_text(
         for block in _split_blocks(text):
             units.extend(_Unit(part, None) for part in _split_long_block(block, target_tokens))
 
-    chunks: list[tuple[str, int | None]] = []
-    current: list[_Unit] = []
-    current_tokens = 0
+    # A citation names one page, so when page boundaries are known a chunk never
+    # crosses one: each page is windowed on its own (overlap and the small-tail
+    # merge stay inside the page). Previously a chunk took the page of its first
+    # unit while overlap carried earlier pages forward, so figures printed on
+    # pages 4 and 25 were cited as "page 2".
+    groups: list[list[_Unit]] = []
     for unit in units:
-        unit_tokens = estimate_tokens(unit.text)
-        if current and current_tokens + unit_tokens > target_tokens:
-            chunks.append(_join(current))
-            current, current_tokens = _overlap_tail(current, overlap_tokens)
-        current.append(unit)
-        current_tokens += unit_tokens
-
-    if current:
-        content, page = _join(current)
-        if chunks and estimate_tokens(content) < min_tokens:
-            previous, previous_page = chunks[-1]
-            chunks[-1] = (f"{previous}\n\n{content}", previous_page)
+        if pages and groups and groups[-1][0].page == unit.page:
+            groups[-1].append(unit)
+        elif pages or not groups:
+            groups.append([unit])
         else:
-            chunks.append((content, page))
+            groups[-1].append(unit)
+
+    chunks: list[tuple[str, int | None]] = []
+    for group in groups:
+        group_chunks: list[tuple[str, int | None]] = []
+        current: list[_Unit] = []
+        current_tokens = 0
+        for unit in group:
+            unit_tokens = estimate_tokens(unit.text)
+            if current and current_tokens + unit_tokens > target_tokens:
+                group_chunks.append(_join(current))
+                current, current_tokens = _overlap_tail(current, overlap_tokens)
+            current.append(unit)
+            current_tokens += unit_tokens
+
+        if current:
+            content, page = _join(current)
+            if group_chunks and estimate_tokens(content) < min_tokens:
+                previous, previous_page = group_chunks[-1]
+                group_chunks[-1] = (f"{previous}\n\n{content}", previous_page)
+            else:
+                group_chunks.append((content, page))
+        chunks.extend(group_chunks)
 
     return [
         Chunk(index=i, content=content, token_count=estimate_tokens(content), page_number=page)
